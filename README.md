@@ -15,7 +15,7 @@ Lead conversion is important in banking operation’s success but sales and mark
 
 • Objective 2: increasing revenue by reaching as many potential customers as possible.
 
-# Modelling: 
+# Modelling
 We implemented four models to classify prospective bank customers: Support Vector Machine (SVM), Random Forest, Logistic Regression and eXtreme Gradient Boosting (XGB). The binary variable, ‘Target’, referred to lead conversion in given dataset and was used to analyse the models’ results and determine their accuracy. Due to their unique advantages, these supervised models were selected to predict Target variable.
 
 We implemented two distinct strategies for models: one with feature selection and one without. This approach is crucial because while feature selection based on information gain can mitigate overfitting, it might also miss important interactions between variables, potentially impacting model performance. Considering the operation efficiency and time cost, 10% of training data is used for parameter tuning, and K-fold cross-validation is set to 5 to select optimal model from these parameters. Once the best parameters are identified, we train model on the entire training set. Unlike basic models that directly classify customers, our model predicts the probability of a customer making a purchase, allowing for the manual setting of different threshold values for future model comparison. Finally, the model's performance is evaluated using a separate test set.
