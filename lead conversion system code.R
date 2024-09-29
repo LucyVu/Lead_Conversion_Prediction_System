@@ -1,0 +1,847 @@
+---
+title: "Lead Conversion Prediction System with Machine Learning Models"
+author: "Group 28"
+---
+
+## ----Install the packages-----------------------------------------------------------------------------------------
+# Install tidyverse package
+install.packages("tidyverse")
+
+# Install dplyr package
+install.packages("dplyr")
+
+# Install mltools package
+install.packages("mltools")
+
+# Install data.table package
+install.packages("data.table")
+
+# Install caret package
+install.packages("caret")
+
+# Install ROSE package
+install.packages("ROSE")
+
+# Install FSelector package for Feature Selection
+install.packages("FSelector")
+
+# Install e1071 package for SVM model
+install.packages("e1071")
+
+# Install randomForestSRC package for Random Forest Model tuning
+install.packages("randomForest")
+
+# Install randomForestSRC package for Random Forest Model tuning
+install.packages("randomForestSRC")
+
+# Install the PROC package for ROC chart
+install.packages("pROC")
+
+# Install the glmnet package for Logistic Regression Model Tuning
+install.packages("glmnet")
+
+# Install the xbgboost package for xgboost model
+install.packages("xgboost")
+
+# Install the CustomerScoringMetrics and gridExtra package for Gain Chart
+install.packages("CustomerScoringMetrics")
+
+# Install the ALEPlot and iml lackage for ALE plot
+install.packages("ALEPlot")
+install.packages("iml")
+
+
+## ----library the packages-----------------------------------------------------------------------------------------
+# library packages
+library(gridExtra)
+library(tidyverse)
+library(dplyr) 
+library(mltools)
+library(data.table)
+library(caret) 
+library(ROSE) 
+library(FSelector)
+library(e1071)
+library(randomForest)
+library(randomForestSRC)
+library(pROC) 
+library(glmnet)
+library(xgboost)
+library(ggplot2)
+library(CustomerScoringMetrics)
+library(ALEPlot)
+library(iml)
+
+
+## ----Data Preparation---------------------------------------------------------------------------------------------
+# Import our data and save it to variable creditdf
+data_lead<- read.csv("lead_conversion_data.csv", stringsAsFactors = T)
+
+# Check the structure and the summary
+str(data_lead)
+summary(data_lead)
+
+# Update taeget varibale
+data_lead$Target <- factor(ifelse(data_lead$Target == 1, "Yes", "No"))
+# Check duplicated ID, no ID duplicated
+duplicates_id <- duplicated(data_lead$ID)
+num_duplicates_id <- sum(duplicates_id)
+print(num_duplicates_id)
+
+# Check missing value in each column
+missing_values <- colSums(is.na(data_lead))
+print(missing_values)
+
+# Check the missing values and replace them with mode
+table(data_lead$Credit_Product)
+data_lead <- replace_na(data_lead, list(Credit_Product = "No"))
+summary(data_lead)
+
+# Check unique value in each col
+selected_columns <- data_lead[, c("Gender", "Dependent", "Marital_Status", "Occupation", "Channel_Code", "Credit_Product", "Account_Type", "Active", "Registration", "Target")]
+
+# Calculate the unique values for each of the selected columns
+unique_values_per_column <- lapply(selected_columns, unique)
+
+# Print out the unique values for each column
+print(unique_values_per_column)
+
+# Check the frequency of each value in "Dependent" column to identify any unusual values
+dependent_counts <- table(data_lead$Dependent)
+print(dependent_counts)
+
+# Delete the unusual values in "Dependent"
+data_lead <- data_lead[data_lead$Dependent != -1, ]
+
+# Check the distribution of continuous variables
+boxplot(data_lead$Age)
+boxplot(data_lead$Years_at_Residence)
+boxplot(data_lead$Vintage)
+boxplot(data_lead$Avg_Account_Balance)
+
+plot_age <- ggplot(data_lead, aes(x = Age)) +
+  geom_boxplot(fill = "lightblue") +
+  ggtitle("Age") + 
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none")
+
+plot_residence <- ggplot(data_lead, aes(x = Years_at_Residence)) +
+  geom_boxplot(fill = "lightblue") +
+  ggtitle("Year at Residence") + 
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none")
+
+plot_vintage <- ggplot(data_lead, aes(x = Vintage)) +
+  geom_boxplot(fill = "lightblue") +
+  ggtitle("Vintage") + 
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none")
+
+plot_balance <- ggplot(data_lead, aes(x = Avg_Account_Balance)) +
+  geom_boxplot(fill = "lightblue") +
+  ggtitle("Average Account Balance") + 
+  scale_x_continuous(labels = function(x) {
+  format(x, scientific = FALSE)}) +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "none")
+
+# Combine four plots
+grid.arrange(plot_age, plot_residence, plot_vintage, plot_balance, ncol = 2)
+
+# Encode the Region_Code
+data_lead <- data_lead %>%
+  group_by(Region_Code) %>%
+  mutate(Region_Code = ifelse(n() <= 10000, "Other", as.character(Region_Code))) %>%
+  ungroup() 
+
+# update the data level for one hot encoding
+data_lead$Region_Code<-as.factor(data_lead$Region_Code)
+
+#Apply ifelse function to update the Gender
+data_lead$Gender<-ifelse(data_lead$Gender=='Male',1,0)
+data_lead$Active<-ifelse(data_lead$Active =='Yes',1,0)
+data_lead$Credit_Product<-ifelse(data_lead$Credit_Product=='Yes',1,0)
+
+# Apply one-hot encoding
+data_lead <- one_hot(as.data.table(data_lead), cols = "Region_Code")
+data_lead$Marital_Status <- factor(data_lead$Marital_Status,
+                                   levels = c(0, 1, 2),
+                                   labels =c("others","married","single"))
+data_lead <- one_hot(as.data.table(data_lead), cols = "Marital_Status")
+data_lead <- one_hot(as.data.table(data_lead), cols = "Occupation")
+data_lead <- one_hot(as.data.table(data_lead), cols = "Channel_Code")
+data_lead <- one_hot(as.data.table(data_lead), cols = "Account_Type")
+
+# Remove the ID column
+data_lead$ID <- NULL
+
+# Final check for structure
+str(data_lead)
+summary(data_lead)
+
+
+## ----Data Partition-----------------------------------------------------------------------------------------------
+# Set a seed of 10 by using set.seed() function
+set.seed(10)
+
+# Partition the dataset into training and test sets
+# index keeps the record indices for the training data
+index = createDataPartition(data_lead$Target, p = 0.7, list = FALSE)
+
+# Generate training and test data
+training = data_lead[index, ]
+test = data_lead[-index, ]
+
+# Check the class distribution in the target column for data_lead, trainingset and testset
+prop.table(table(data_lead$Target))
+prop.table(table(training$Target))
+prop.table(table(test$Target))
+
+
+## ----Handling Imbalanced Data-------------------------------------------------------------------------------------
+# Setting a seed for reproducibility
+set.seed(1) 
+
+# Apply both, over and under sampling technique, and create the sample data for model tuning
+bothsampled <- ovun.sample(Target~., data = training, method = "both", p=0.5, seed=1)$data
+sampled_data <- bothsampled %>% sample_n(., size = nrow(bothsampled) * 0.1)
+
+# Feature Selection (use training data)
+# Use function information.gain to compute information gain values of the attributes
+weights <- information.gain(Target~., training)
+print(weights)
+
+# add row names as a column to keep them during ordering
+weights$attr <- rownames(weights)
+
+# Let's sort the weights in decreasing order of information gain values.
+# We will use arrange() function 
+weights <- arrange(weights, -attr_importance)
+
+# Plot the weights
+barplot(weights$attr_importance, names = weights$attr, las = 2, ylim = c(0, 0.2))
+
+# Use the features with positive information gain
+weights <- filter(weights, attr_importance > 0)
+print(weights)
+
+# Extract the names of those features
+features <- rownames(weights)
+
+# Select a subset of the dataset by using features 
+modellingdata <- sampled_data[features]
+
+# Do not forget to add target variable
+modellingdata$Target <- sampled_data$Target
+
+# Use whole training data with feature selection
+bothsampled_selected <- bothsampled[features]
+bothsampled_selected$Target <- bothsampled$Target
+
+
+## ----SVM with feature selection-----------------------------------------------------------------------------------
+# Set a seed for reproducibility
+set.seed(101)
+
+# Model tuning with 10% training data
+tune_out_svm_fs <- train(
+  Target~., 
+  data = modellingdata, 
+  method = "svmRadial",  
+  metric = "ROC",  
+  trControl = trainControl(method = "cv", number = 5, classProbs = TRUE, summaryFunction = twoClassSummary), 
+  tuneGrid = expand.grid(C = c(0.1, 1, 10, 100, 1000), sigma = c(0.1, 1, 10)), 
+  probability = TRUE, 
+  scale = TRUE)
+
+# Select the best hyperparameters
+best_svm_params_fs <- tune_out_svm_fs$bestTune
+
+# Train SVM with best hyperparameters (assuming best_svm_params_fs contains the best parameters)
+best_svm_model_fs <- svm(
+  Target~.,
+  data = bothsampled_selected,
+  kernel = "radial",
+  cost = best_svm_params_fs$C, 
+  gamma = 1 / (2 * best_svm_params_fs$sigma^2), 
+  probability = TRUE, 
+  scale = TRUE)
+
+# Predict the class probabilities of the test data
+SVM_tunedpred_fs <- predict(best_svm_model_fs, test, probability = TRUE)
+
+# Use SVMpred to extract probabilities
+SVM_prob_fs <- attr(SVM_tunedpred_fs, "probabilities")
+
+# Set threshold - 0.5
+custom_pred_fs <- ifelse(SVM_prob_fs[, 2] > 0.5, "Yes", "No")
+custom_pred_fs <- as.factor(custom_pred_fs)
+
+# Use confusionMatrix to print the performance of SVM model 
+confusionMatrix(custom_pred_fs, test$Target, positive="Yes", mode = "prec_recall")
+
+# SVM
+ROC_SVM_fs <- roc(test$Target, SVM_prob_fs[,2])
+
+# Calculate the area under the curve (AUC) for SVM 
+auc(ROC_SVM_fs)
+
+# Change threshold - 0.8
+custom_pred_fs <- ifelse(SVM_prob_fs[, 2] > 0.8, "Yes", "No")
+custom_pred_fs <- as.factor(custom_pred_fs)
+
+# Use confusionMatrix to print the performance of SVM model 
+confusionMatrix(custom_pred_fs, test$Target, positive="Yes", mode = "prec_recall")
+
+# SVM
+ROC_SVM_fs <- roc(test$Target, SVM_prob_fs[,2])
+
+# Calculate the area under the curve (AUC) for SVM 
+auc(ROC_SVM_fs)
+
+
+## ----SVM without feature selection--------------------------------------------------------------------------------
+# SVM Model without Feature Selection
+# Set a seed for reproducibility
+set.seed(101)
+
+# Model tuning with 10% training data
+tune_out_svm_ns <- train(
+  Target~., 
+  data = sampled_data, 
+  method = "svmRadial",  
+  metric = "ROC",  
+  trControl = trainControl(method = "cv", number = 5, classProbs = TRUE, summaryFunction = twoClassSummary), 
+  tuneGrid = expand.grid(C = c(0.1, 1, 10, 100, 1000), sigma = c(0.1, 1, 10)), 
+  probability = TRUE, 
+  scale = TRUE)
+
+# Select the best hyperparameters
+best_svm_params_ns <- tune_out_svm_ns$bestTune
+
+# Train SVM with best hyperparameters (assuming best_svm_params_ns contains the best parameters)
+best_svm_model_ns <- svm(
+  Target~.,
+  data = bothsampled,
+  kernel = "radial",
+  cost = best_svm_params_ns$C, 
+  gamma = 1 / (2 * best_svm_params_ns$sigma^2), 
+  probability = TRUE, 
+  scale = TRUE)
+
+# Predict the class of the test data 
+SVM_tunedpred_ns <- predict(best_svm_model_ns, test, probability = TRUE)
+
+# Use SVMpred to extract probabilities
+SVM_prob_ns <- attr(SVM_tunedpred_ns, "probabilities")
+
+# Set threshold - 0.5
+custom_pred_ns <- ifelse(SVM_prob_ns[, 2] > 0.5, "Yes", "No")
+custom_pred_ns <- as.factor(custom_pred_ns)
+
+# Use confusionMatrix to print the performance of SVM model 
+confusionMatrix(custom_pred_ns, test$Target, positive="Yes", mode = "prec_recall")
+
+# SVM
+ROC_SVM_ns <- roc(test$Target, SVM_prob_ns[,2])
+
+# Calculate the area under the curve (AUC) for SVM 
+auc(ROC_SVM_ns)
+
+# Change threshold - 0.8
+custom_pred_ns <- ifelse(SVM_prob_ns[, 2] > 0.8, "Yes", "No")
+custom_pred_ns <- as.factor(custom_pred_ns)
+
+# Use confusionMatrix to print the performance of SVM model 
+confusionMatrix(custom_pred_ns, test$Target, positive="Yes", mode = "prec_recall")
+
+# SVM
+ROC_SVM_ns <- roc(test$Target, SVM_prob_ns[,2])
+
+# Calculate the area under the curve (AUC) for SVM 
+auc(ROC_SVM_ns)
+
+
+## ----RF with feature selection------------------------------------------------------------------------------------
+# Setting a seed for reproducibility
+set.seed(2)
+
+# Perform joint hyperparameter tuning using tune function
+tuned_rf_fs <- randomForestSRC::tune(
+  Target~., 
+  modellingdata,
+  mtryStart = sqrt(ncol(modellingdata)),   
+  nodesizeTry = seq(1, 10, by = 1), 
+  ntree = 500,
+  stepFactor = 1.25,
+  improve = 0.001,
+  auc = function(data, lev, model) {
+    # Compute AUC using pROC package
+    roc_obj <- roc(data$obs, model$data[, lev])
+    auc(roc_obj)})
+
+# Extract the best hyperparameters based on AUC
+best_rf_params_fs <- tuned_rf_fs$optimal
+best_mtry_fs <- best_rf_params_fs["mtry"]
+best_nodesize_fs <- best_rf_params_fs["nodesize"]
+
+bestRF_fs <- randomForest(Target~., 
+                          data= bothsampled_selected, 
+                          mtry = best_mtry_fs, 
+                          nodesize = best_nodesize_fs, 
+                          ntree = 500)
+
+RF_tuned_prob_fs <- predict(bestRF_fs, test, type = "prob")
+
+# Predict the class - Set threshold 0.5
+rf_Target_fs <- ifelse(RF_tuned_prob_fs[,2] > 0.5, "Yes", "No")
+
+# Save the predictions as factor variables
+rf_Target_fs <- as.factor(rf_Target_fs)
+confusionMatrix(rf_Target_fs, test$Target, positive="Yes", mode = "prec_recall")
+
+# Calculate the AUC for Random Forest
+ROC_RF_fs <- roc(test$Target, RF_tuned_prob_fs[,2])
+auc(ROC_RF_fs)
+
+# Predict the class - Change threshold to 0.8
+rf_Target_fs <- ifelse(RF_tuned_prob_fs[,2] > 0.8, "Yes", "No")
+
+# Save the predictions as factor variables
+rf_Target_fs <- as.factor(rf_Target_fs)
+confusionMatrix(rf_Target_fs, test$Target, positive="Yes", mode = "prec_recall")
+
+# Calculate the AUC for Random Forest
+ROC_RF_fs <- roc(test$Target, RF_tuned_prob_fs[,2])
+auc(ROC_RF_fs)
+
+
+## ----RF without feature selection---------------------------------------------------------------------------------
+# Setting a seed for reproducibility
+set.seed(2)
+
+# Perform hyperparameter tuning using tune function
+tuned_rf_ns <- randomForestSRC::tune(
+  Target~., sampled_data,
+  mtryStart = sqrt(ncol(sampled_data)),   
+  nodesizeTry = seq(1, 10, by = 1), 
+  ntree = 500,
+  stepFactor = 1.25,
+  improve = 0.001,
+  auc = function(data, lev, model) {
+    # Compute AUC using pROC package
+    roc_obj <- roc(data$obs, model$data[, lev])
+    auc(roc_obj)}
+  )
+
+# Extract the best hyperparameters based on AUC
+best_rf_params_ns <- tuned_rf_ns$optimal
+best_mtry_ns <- best_rf_params_ns["mtry"]
+best_nodesize_ns <- best_rf_params_ns["nodesize"]
+
+bestRF_ns <- randomForest(Target~., 
+                          data= bothsampled, 
+                          mtry = best_mtry_ns, 
+                          nodesize = best_nodesize_ns, 
+                          ntree = 500)
+
+RF_tuned_prob_ns <- predict(bestRF_ns, test, type = "prob")
+
+# Predict the class - Set threshold 0.5
+rf_Target_ns <- ifelse(RF_tuned_prob_ns[,2] > 0.5, "Yes", "No")
+
+# Save the predictions as factor variables
+rf_Target_ns <- as.factor(rf_Target_ns)
+confusionMatrix(rf_Target_ns, test$Target, positive="Yes", mode = "prec_recall")
+
+# Calculate the AUC
+ROC_RF_ns <- roc(test$Target, RF_tuned_prob_ns[,2])
+auc(ROC_RF_ns)
+
+# Predict the class - Change threshold to 0.8
+rf_Target_ns <- ifelse(RF_tuned_prob_ns[,2] > 0.8, "Yes", "No")
+
+# Save the predictions as factor variables
+rf_Target_ns <- as.factor(rf_Target_ns)
+confusionMatrix(rf_Target_ns, test$Target, positive="Yes", mode = "prec_recall")
+
+# Calculate the AUC
+ROC_RF_ns <- roc(test$Target, RF_tuned_prob_ns[,2])
+auc(ROC_RF_ns)
+
+
+## ----Logistic Regression Model------------------------------------------------------------------------------------
+# Setting a seed for reproducibility
+set.seed(3)
+
+# Model Tuning: for Logistic Regression, hyperparameter selection
+# Extract all the independent variables
+x <- as.matrix(sapply(sampled_data[, 1:30], as.numeric)) 
+
+# Extract the dependent variable
+y <- sampled_data$Target
+
+# For repeatable result
+set.seed(123)
+cv_fit <- cv.glmnet(x, y, family = "binomial")
+
+# To get the best lambda. In this code, the alpha parameter is not explicitly set. Therefore, the cv.glmnet function will use the default alpha value of glmnet. In the glmnet package, the default alpha value is usually 1, which means that it will perform Lasso regularisation (L1 regularisation). Lasso regularisation helps to generate a sparse model, i.e., some coefficients may be compressed to zero, thus enabling variable selection. This approach is particularly suitable for dealing with situations with a large number of features, especially when some of the features do not have a significant impact on predicting the target variable.
+
+# Find the minimum lambda
+best_lambda <- cv_fit$lambda.min
+print(best_lambda)
+
+# Use this lambda to build the best model
+x2 <- as.matrix(sapply(bothsampled[, 1:30], as.numeric)) 
+
+y2 <- bothsampled$Target 
+
+Best_LR_model <- glmnet(x2, y2, family = "binomial", lambda = best_lambda)
+
+# Print the best model summary
+print(Best_LR_model)
+
+# Predict the Target of the test data
+LR_best_predict <- predict(Best_LR_model, as.matrix(sapply(test[, 1:30], as.numeric)) , type="response")
+
+# Predict the class - Set threshold 0.5
+LogReg_Target <- ifelse(LR_best_predict > 0.5, "Yes", "No")
+
+# Save the predictions as factor variables
+LogReg_Target <- as.factor(LogReg_Target)
+
+confusionMatrix(LogReg_Target, test$Target, positive = "Yes", mode = "prec_recall")
+
+# Obtain the ROC curve data for logistic regression
+ROC_LogReg <- roc(test$Target, LR_best_predict[, 1])
+
+# Calculate the area under the curve (AUC) for Logistic Regression 
+auc(ROC_LogReg)
+
+# Predict the class - Change threshold to 0.8
+LogReg_Target <- ifelse(LR_best_predict > 0.8, "Yes", "No")
+
+# Save the predictions as factor variables
+LogReg_Target <- as.factor(LogReg_Target)
+
+confusionMatrix(LogReg_Target, test$Target, positive = "Yes", mode = "prec_recall")
+
+# Obtain the ROC curve data for logistic regression
+ROC_LogReg <- roc(test$Target, LR_best_predict[, 1])
+
+# Calculate the area under the curve (AUC) for Logistic Regression 
+auc(ROC_LogReg)
+
+
+## ----XGBOOST with feature selection-------------------------------------------------------------------------------
+# Setting a seed for reproducibility
+set.seed(4)
+
+# Set the grid search parameter for cross validation
+xgbGrid_fs <- expand.grid(
+  nrounds = c(150, 200),
+  max_depth = c(4, 6, 8),
+  eta = c(0.01, 0.05, 0.1),
+  gamma = c(0, 0.1, 0.2),
+  colsample_bytree = c(0.5, 0.7, 0.9),
+  min_child_weight = c(1, 3, 5),
+  subsample = c(0.7, 0.8, 0.9))
+ 
+# Set the control parameter for cross validation, 5 iterations
+traincontrol_fs <- trainControl(
+  method = "cv",
+  number = 5,
+  classProbs = TRUE, 
+  summaryFunction = twoClassSummary)
+
+# Train the Model and do parameter selection by AUC
+xgbTrain_fs <- train(Target~., data = modellingdata, method = "xgbTree", trControl = traincontrol_fs, tuneGrid = xgbGrid_fs, metric = "ROC")
+
+# Extracting the best parameters from the grid search
+best_params_fs <- xgbTrain_fs$bestTune
+
+# Retraining the model with the best parameters on the full training dataset
+best_xgb_model_fs <- train(
+  Target ~ .,
+  data =bothsampled_selected,
+  method = "xgbTree",
+  trControl = traincontrol_fs, 
+  tuneGrid = data.frame(best_params_fs))
+
+# Use this best trained xgboost model to predict; Set threshold 0.5
+predictions_fs <- predict(best_xgb_model_fs, newdata = test, type = "prob")
+binary_predictions_fs <- as.factor(ifelse(predictions_fs[,2] > 0.5, "Yes", "No"))
+ 
+# 'predictions' contains the probability value that each sample belongs to the positive category
+# Use confusionMatrix to print the performance of XGBoost model
+confusionMatrix(binary_predictions_fs, test$Target, positive='Yes', mode = "prec_recall")
+
+# Use roc function to return some performance metrics
+ROC_XBOOST_fs<- roc(test$Target, predictions_fs[,2])
+
+# Calculate the area under the curve (AUC) for XGBoost
+auc(ROC_XBOOST_fs)
+
+# Use this best trained xgboost model to predict; Change threshold to 0.8
+predictions_fs <- predict(best_xgb_model_fs, newdata = test, type = "prob")
+binary_predictions_fs <- as.factor(ifelse(predictions_fs[,2] > 0.8, "Yes", "No"))
+ 
+# 'predictions' contains the probability value that each sample belongs to the positive category
+# Use confusionMatrix to print the performance of XGBoost model
+confusionMatrix(binary_predictions_fs, test$Target, positive='Yes', mode = "prec_recall")
+
+# Use roc function to return some performance metrics
+ROC_XBOOST_fs<- roc(test$Target, predictions_fs[,2])
+
+# Calculate the area under the curve (AUC) for XGBoost
+auc(ROC_XBOOST_fs)
+
+
+## ----XGBOOST without feature selection----------------------------------------------------------------------------
+# Setting a seed for reproducibility
+set.seed(4)
+
+# Set the grid search parameter for cross validation
+xgbGrid <- expand.grid(
+  nrounds = c(150, 200),
+  max_depth = c(4, 6, 8),
+  eta = c(0.01, 0.05, 0.1),
+  gamma = c(0, 0.1, 0.2),
+  colsample_bytree = c(0.5, 0.7, 0.9),
+  min_child_weight = c(1, 3, 5),
+  subsample = c(0.7, 0.8, 0.9))
+
+# Set the control parameter for cross validation, 5 iterations
+traincontrol_ns <- trainControl(
+  method = "cv",
+  number = 5,
+  classProbs = TRUE, 
+  summaryFunction = twoClassSummary)
+ 
+# Train the Model and do parameter selection
+xgbTrain_ns <- train(Target~., data = sampled_data, method = "xgbTree", trControl = traincontrol_ns, tuneGrid = xgbGrid, metric = "ROC")
+
+# Extracting the best parameters from the grid search
+best_params_ns <- xgbTrain_ns$bestTune
+
+# Retraining the model with the best parameters on the full training dataset
+best_xgb_model_ns <- train(
+  Target ~ .,
+  data = bothsampled,
+  method = "xgbTree",
+  trControl = traincontrol_xgb, 
+  tuneGrid = data.frame(best_params_ns))
+
+# Use this best trained xgboost model to predict; Set threshold 0.5
+predictions_ns <- predict(best_xgb_model_ns, newdata = test, type = "prob")
+binary_predictions_ns <- as.factor(ifelse(predictions_ns[,2] > 0.5, "Yes", "No"))
+ 
+# 'predictions' contains the probability value that each sample belongs to the positive category
+# Use confusionMatrix to print the performance of XGBoost model
+confusionMatrix(binary_predictions_ns, test$Target, positive='Yes', mode = "prec_recall")
+
+# Use roc function to return some performance metrics
+ROC_XBOOST_ns <- roc(test$Target, predictions_ns[,2])
+
+# Calculate the area under the curve (AUC) for XGBoost
+auc(ROC_XBOOST_ns)
+
+# Use this best trained xgboost model to predict; Change threshold to 0.8
+predictions_ns <- predict(best_xgb_model_ns, newdata = test, type = "prob")
+binary_predictions_ns <- as.factor(ifelse(predictions_ns[,2] > 0.8, "Yes", "No"))
+ 
+# 'predictions' contains the probability value that each sample belongs to the positive category
+# Use confusionMatrix to print the performance of XGBoost model
+confusionMatrix(binary_predictions_ns, test$Target, positive='Yes', mode = "prec_recall")
+
+# Use roc function to return some performance metrics
+ROC_XBOOST_ns <- roc(test$Target, predictions_ns[,2])
+
+# Calculate the area under the curve (AUC) for XGBoost
+auc(ROC_XBOOST_ns)
+
+
+## ----Plot the ROC comparison curve for SVM, Random Forest, Logistic Regression and XGBoost------------------------
+# Plot the ROC comparison curve for SVM, Random Forest, Logistic Regression and XGBoost
+pROC::ggroc(list(SVM = ROC_SVM_fs, RandomForest = ROC_RF_fs, LogReg = ROC_LogReg, XGBoost = ROC_XBOOST_fs), 
+            legacy.axes = TRUE) + 
+  xlab("False Positive Rate (FPR)") + ylab("True Positive Rate (TPR)") + 
+  geom_abline(aes(intercept = 0, slope = 1), color = "darkgrey", linetype = "dashed") +
+  labs(color = "Model", linetype = "Legend") +
+  scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +  
+  scale_y_continuous(breaks = seq(0, 1, by = 0.1)) +  
+  theme(
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12), 
+    legend.title = element_text(size = 12), 
+    legend.text = element_text(size = 10), 
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)) + 
+  ggtitle("ROC Curve Comparison")
+
+
+## ----Plot the ROC curve for XGBoost-------------------------------------------------------------------------------
+# Plot the ROC curve for XGBoost
+pROC::ggroc(list(XGBoost = ROC_XBOOST_fs), 
+            legacy.axes = TRUE) + 
+  xlab("False Positive Rate (FPR)") + ylab("True Positive Rate (TPR)") + 
+  geom_abline(aes(intercept = 0, slope = 1), color = "darkgrey", linetype = "dashed") +
+  labs(color = "Model", linetype = "Legend") +
+  scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +  
+  scale_y_continuous(breaks = seq(0, 1, by = 0.1)) +  
+  theme(
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12), 
+    legend.title = element_text(size = 12), 
+    legend.text = element_text(size = 10), 
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)) + 
+  ggtitle("ROC Curve")
+
+
+## ----Plot the Gain Chart with increment of 10/100-----------------------------------------------------------------
+# Provide probabilities for the outcome of interest and obtain the gain chart data
+GainTable_SVM <- cumGainsTable(SVM_prob_fs[, 2], test$Target, resolution = 1/100)
+GainTable_RF <- cumGainsTable(RF_tuned_prob_fs[,2], test$Target, resolution = 1/100)
+GainTable_LogReg <- cumGainsTable(LR_best_predict, test$Target, resolution = 1/100)
+GainTable_XGBoost <- cumGainsTable(predictions_fs[,2], test$Target, resolution = 1/100)
+
+plot(GainTable_SVM[,4], col="orange", type="l", lwd = 1.5,   
+xlab="Percentage of test instances (%)", ylab="Percentage of identified Potential Target Customers (%)")
+axis(1, at = seq(0, 100, by = 10)) 
+axis(2, at = seq(0, 100, by = 10))
+lines(GainTable_RF[,4], col="green", type ="l", lwd = 1.5)
+lines(GainTable_LogReg[,4], col="blue", type ="l", lwd = 1.5)
+lines(GainTable_XGBoost[,4], col="red", type ="l", lwd = 1.5)
+title(main = "Cumulative Gain Chart Comparison")
+grid(NULL, lwd = 1)
+
+legend("bottomright",
+c("SVM", "Random Forest", "LogReg", "XGBoost"),
+fill=c("orange","green","blue", "red"))
+
+
+## ----Plot the Gain Chart of XGB-----------------------------------------------------------------------------------
+# Provide probabilities for the outcome of interest and obtain the gain chart data
+GainTable_XGBoost <- cumGainsTable(predictions_fs[,2], test$Target, resolution = 1/100)
+
+plot(GainTable_XGBoost[,4], col="red", type="l", lwd = 1.5,    
+xlab="Percentage of test instances (%)", ylab="Percentage of identified Potential Target Customers (%)")
+axis(1, at = seq(0, 100, by = 10)) 
+axis(2, at = seq(0, 100, by = 10))
+title(main = "Cumulative Gain Chart")
+grid(NULL, lwd = 1)
+legend("bottomright", c("XGBoost"), fill=c("red"))
+
+
+## ----Plot ALE and Shapley to better explain the model result------------------------------------------------------
+# Extract importance feature
+importance_matrix <- xgb.importance(model = best_xgb_model_fs$finalModel)
+
+# Importance feature for XGBOOST model
+ggplot(importance_matrix, aes(x = reorder(Feature, Gain), y = Gain, fill = Feature)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    scale_fill_viridis_d() +  
+    labs(
+        title = "Feature Importance in  XGBOOST Model",
+        x = "Features",
+        y = "Gain",
+        fill = "Feature"
+    ) +
+    theme_minimal() +
+    theme(
+        plot.title = element_text(face = "bold", size = 14),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        legend.position = "none"
+        )
+
+X <- bothsampled_selected[which(names(bothsampled_selected) != "Target")]
+predictor <- Predictor$new(best_xgb_model_fs, data = X, y = bothsampled_selected$Target)
+
+# ALE plot for age
+ale <- FeatureEffect$new(predictor, feature = "Age")
+
+# Extract only the YES level
+ale_data<-ale$results
+ale_data_even <- ale_data[seq(2, nrow(ale_data), by = 2), ]
+ale_data <- ale_data_even
+
+# ALE plot for age with ggplot
+ggplot(ale_data, aes(x = Age, y = ale_data[,3])) +
+  geom_line(color = "#1F77B4") +  
+  geom_point(color = "#FF7F0E") + 
+  labs(
+    title = "Accumulated Local Effects (ALE) Analysis of Age on Prediction Outcome",
+    x = "Age",
+    y = "ALE Effect"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# ALE plot for average account balance
+ale_avg_account <- FeatureEffect$new(predictor, feature = "Avg_Account_Balance")
+ale_data_account<-ale_avg_account$results
+ale_data_account <- ale_data_account[seq(2, nrow(ale_data_account), by = 2), ]
+
+# ALE plot for average account balance with ggplot
+ggplot(ale_data_account, aes(x = Avg_Account_Balance, y = ale_data_account[,3])) +
+  geom_line(color = "#1F77B4") +  
+  geom_point(color = "#FF7F0E") + 
+  labs(
+    title = "Accumulated Local Effects (ALE) Analysis of average account balance on Prediction Outcome",
+    x = "Average account balance",
+    y = "ALE Effect"
+  ) +scale_x_continuous(labels = function(x) format(x, scientific = FALSE))+
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+#  ALE plot for registration with ggplot
+ale_registration <- FeatureEffect$new(predictor, feature = "Registration")
+ale_registration$plot
+ale_data_registration<-ale_registration$results
+ale_data_registration <- ale_data_registration[seq(2, nrow(ale_data_registration), by = 2), ]
+ale_data_registration$Registration<-as.factor(ale_data_registration$Registration)
+
+ggplot(ale_data_registration, aes(x = Registration, y = ale_data_registration[,3])) +
+  geom_bar(stat = "identity", fill = "#1F77B4",width=0.01) +  
+  labs(
+    title = "Accumulated Local Effects (ALE) Analysis of Registration on Prediction Outcome",
+    x = "Registration",
+    y = "ALE Effect"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
+# Shapley plot for individual case
+shapley <- Shapley$new(predictor, x.interest = X[127024, ])
+shapley$plot()
+shap_values<-shapley$results[19:36,]
+
+
+# Shapley with ggplot
+ggplot(shap_values, aes(x = reorder(feature.value, abs(phi)), y = phi, fill = feature)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +  
+  scale_fill_viridis_d() +  
+  labs(title = "SHAP Value Analysis",
+       x = "Feature Values",
+       y = "SHAP Value (phi)") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10)
+  )
+
